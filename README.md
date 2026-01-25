@@ -3,7 +3,7 @@
 Lightweight CLI for scanning WiFi networks, running speed tests (Ookla / iperf3),
 saving results to a local SQLite database, and exporting CSVs.
 
-# Installation
+## Installation
 
 ```bash
 poetry install
@@ -83,6 +83,17 @@ sudo apt update && sudo apt install -y iw iperf3
 # Ookla speedtest CLI install (official instructions):
 # https://www.speedtest.net/apps/cli
 ```
+
+## Tool Preview
+![WiFi Scanner Screenshot](assets/scan_output.png)
+
+### 📺 Walkthrough Demo (2 mins)
+<details>
+  <summary>Click to expand video demo</summary>
+  
+  https://github.com/vajraccedika/wifi-test/raw/main/assets/wifi-test_demo.mp4
+
+</details>
 
 Permissions
 
