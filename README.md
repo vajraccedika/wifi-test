@@ -88,13 +88,8 @@ sudo apt update && sudo apt install -y iw iperf3
 ![WiFi Scanner Screenshot](assets/scan_output.png)
 
 ### 📺 Walkthrough Demo (2 mins)
-<details>
-  <summary>📺 Click to expand video walkthrough (2 mins)</summary>
-  <br>
-  <video src="https://github.com/vajraccedika/wifi-test/raw/main/assets/wifi-test_demo.mp4" controls="controls" style="max-width: 100%;">
-    Your browser does not support the video tag.
-  </video>
-</details>
+
+https://github.com/user-attachments/assets/464a24d6-8422-48f1-9e11-1c44728f1781
 
 Permissions
 
