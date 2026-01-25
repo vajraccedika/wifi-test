@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "wifi-test"
+version = "0.1.0"
+description = "Utility for collection of WiFi device data."
+authors = ["Ryan Stoia <rstoia81@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+click = "^8.3.1"
+pandas = "^3.0.0"
+python-dotenv = "^1.2.1"
+rich = "^14.3.1"
+
+[tool.poetry.scripts]
+wifi-test = "wifi_test.cli:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
