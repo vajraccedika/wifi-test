@@ -89,10 +89,11 @@ sudo apt update && sudo apt install -y iw iperf3
 
 ### 📺 Walkthrough Demo (2 mins)
 <details>
-  <summary>Click to expand video demo</summary>
-  
-  https://github.com/vajraccedika/wifi-test/raw/main/assets/wifi-test_demo.mp4
-
+  <summary>📺 Click to expand video walkthrough (2 mins)</summary>
+  <br>
+  <video src="https://github.com/vajraccedika/wifi-test/raw/main/assets/wifi-test_demo.mp4" controls="controls" style="max-width: 100%;">
+    Your browser does not support the video tag.
+  </video>
 </details>
 
 Permissions
