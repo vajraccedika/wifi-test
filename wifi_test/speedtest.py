@@ -17,6 +17,7 @@ class SpeedtestResult:
     tool: str  # 'ookla' or 'iperf3'
     timestamp: str  # ISO format
     ssid: Optional[str] = None  # WiFi network SSID
+    bssid: Optional[str] = None  # Access point BSSID (MAC)
     download_mbps: float = 0.0  # Download speed in Mbps
     upload_mbps: float = 0.0  # Upload speed in Mbps
     ping_ms: float = 0.0  # Latency in milliseconds
@@ -143,6 +144,55 @@ def disconnect_network(interface: str) -> bool:
         return False
 
 
+def get_current_link_info(interface: str) -> tuple[Optional[str], Optional[str]]:
+    """Get SSID and BSSID for the currently connected network.
+
+    Parses output from `iw dev <interface> link`, e.g.:
+    - Connected to 34:ca:81:49:15:ff (on wlp15s0)
+    - SSID: JB_NEW
+
+    Args:
+        interface: WiFi interface name
+
+    Returns:
+        Tuple of (ssid, bssid), where each value is None if unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["iw", "dev", interface, "link"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        ssid: Optional[str] = None
+        bssid: Optional[str] = None
+
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+
+            if line.lower().startswith("connected to "):
+                parts = line.split()
+                if len(parts) >= 3:
+                    candidate = parts[2].strip().lower()
+                    octets = candidate.split(":")
+                    if len(octets) == 6 and all(len(octet) == 2 for octet in octets):
+                        bssid = candidate
+
+            elif line.startswith("SSID:"):
+                candidate = line.split(":", 1)[1].strip()
+                if candidate:
+                    ssid = candidate
+
+        return ssid, bssid
+    except (
+        subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+    ):
+        return None, None
+
+
 def get_current_ssid(interface: str) -> Optional[str]:
     """Get the SSID of the currently connected network.
 
@@ -152,6 +202,11 @@ def get_current_ssid(interface: str) -> Optional[str]:
     Returns:
         SSID string or None if not connected
     """
+    ssid, _ = get_current_link_info(interface)
+    if ssid:
+        return ssid
+
+    # Fallback to nmcli for compatibility on systems where `iw` output differs.
     try:
         result = subprocess.run(
             ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
@@ -165,6 +220,22 @@ def get_current_ssid(interface: str) -> Optional[str]:
         return None
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         return None
+
+
+def get_current_bssid(interface: str) -> Optional[str]:
+    """Get the BSSID (AP MAC address) of the currently connected network.
+
+    Runs `iw dev <interface> link` and parses output like:
+    `Connected to 34:ca:81:49:15:ff (on wlp15s0)`
+
+    Args:
+        interface: WiFi interface name
+
+    Returns:
+        BSSID MAC address string if connected, otherwise None
+    """
+    _, bssid = get_current_link_info(interface)
+    return bssid
 
 
 def parse_ookla_json(json_output: str) -> Optional[SpeedtestResult]:

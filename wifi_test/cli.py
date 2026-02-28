@@ -15,6 +15,7 @@ from wifi_test.speedtest import (
     SpeedtestResult,
     connect_to_network,
     disconnect_network,
+    get_current_bssid,
     get_current_ssid,
     has_internet,
     reconnect_saved_network,
@@ -568,7 +569,7 @@ def speedtest(
             if not quiet:
                 console.print(f"[green]Found {len(networks)} matching networks[/green]")
 
-            # Save scan results used for auto-connect (if configured)
+            # Save network results used for auto-connect (if configured)
             if cfg.auto_save:
                 try:
                     count = db.insert_scan_results([n.to_dict() for n in networks])
@@ -691,6 +692,7 @@ def speedtest(
 
                 if result:
                     result.ssid = ssid
+                    result.bssid = get_current_bssid(interface) or network.bssid
                     results.append(
                         {
                             "ssid": ssid,
@@ -841,6 +843,13 @@ def speedtest(
                 console.print("[red]Error:[/red] Speedtest failed")
             raise click.exceptions.Exit(1)
 
+        current_ssid = get_current_ssid(interface)
+        current_bssid = get_current_bssid(interface)
+        if current_ssid:
+            result.ssid = current_ssid
+        if current_bssid:
+            result.bssid = current_bssid
+
         if not quiet:
             # Display results in a nice format
             console.print("\n[bold]Speedtest Results:[/bold]")
@@ -880,8 +889,8 @@ def export(output: str):
     """Export data from database to CSV file.
 
     If `--output` is omitted you'll be prompted for a filename.
-    Exports both `scan_results` and `speedtest_results` into a single CSV
-    with a top-level `record_type` column indicating the source table.
+    Exports unified `network_results` rows into a single CSV.
+    `bssid` serves as the unique lookup key for network-level records.
     """
     # Prompt for filename if not provided
     if not output:
@@ -898,34 +907,22 @@ def export(output: str):
             raise click.exceptions.Exit(1)
 
     # Fetch data
-    scans = db.get_all_scans()
-    speedtests = db.get_all_speedtests()
+    rows = db.get_all_results()
 
     # Combine columns
     import csv
 
-    rows = []
     all_keys = set()
-
-    for r in scans:
-        rec = dict(r)
-        rec["record_type"] = "scan"
-        rows.append(rec)
-        all_keys.update(rec.keys())
-
-    for r in speedtests:
-        rec = dict(r)
-        rec["record_type"] = "speedtest"
-        rows.append(rec)
-        all_keys.update(rec.keys())
+    for r in rows:
+        all_keys.update(r.keys())
 
     if not rows:
         click.echo("No data to export")
         return
 
-    # Ensure deterministic column order: record_type first, then sorted rest
-    all_keys.discard("record_type")
-    fieldnames = ["record_type"] + sorted(all_keys)
+    # Ensure deterministic column order with bssid first for lookup workflows
+    all_keys.discard("bssid")
+    fieldnames = ["bssid"] + sorted(all_keys)
 
     try:
         with open(out_path, "w", newline="", encoding="utf-8") as f:
