@@ -6,7 +6,6 @@ import socket
 import subprocess
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from typing import Optional
 
 
@@ -15,7 +14,6 @@ class SpeedtestResult:
     """Represents a single speedtest result."""
 
     tool: str  # 'ookla' or 'iperf3'
-    timestamp: str  # ISO format
     ssid: Optional[str] = None  # WiFi network SSID
     bssid: Optional[str] = None  # Access point BSSID (MAC)
     download_mbps: float = 0.0  # Download speed in Mbps
@@ -67,25 +65,25 @@ def wait_for_connection(interface: str = "wlan0", timeout: int = 20) -> bool:
     return False
 
 
-def reconnect_saved_network(ssid: str) -> bool:
-    """Attempt to reconnect to a saved network by SSID.
+def reconnect_saved_network(bssid: str, ssid: Optional[str] = None) -> bool:
+    """Attempt to reconnect to a saved network by BSSID.
 
-    Tries `nmcli con up id <ssid>` first (works if a profile exists),
-    then falls back to `nmcli dev wifi connect <ssid>` which will use
-    saved credentials if available.
+    Tries `nmcli dev wifi connect <ssid> bssid <bssid>` first when SSID is
+    available, then falls back to `nmcli dev wifi connect <bssid>`.
     """
     try:
-        res = subprocess.run(
-            ["nmcli", "con", "up", "id", ssid],
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        if res.returncode == 0:
-            return True
+        if ssid:
+            res = subprocess.run(
+                ["nmcli", "dev", "wifi", "connect", ssid, "bssid", bssid.upper()],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if res.returncode == 0:
+                return True
 
         res = subprocess.run(
-            ["nmcli", "dev", "wifi", "connect", ssid],
+            ["nmcli", "dev", "wifi", "connect", bssid.upper()],
             capture_output=True,
             text=True,
             timeout=20,
@@ -95,11 +93,12 @@ def reconnect_saved_network(ssid: str) -> bool:
         return False
 
 
-def connect_to_network(ssid: str, password: str) -> tuple[bool, str]:
-    """Connect to a WiFi network using nmcli.
+def connect_to_network(ssid: str, bssid: str, password: str) -> tuple[bool, str]:
+    """Connect to a WiFi network/AP using nmcli with BSSID targeting.
 
     Args:
         ssid: Network SSID to connect to
+        bssid: Access point BSSID (MAC address)
         password: Password for the network
 
     Returns:
@@ -108,7 +107,17 @@ def connect_to_network(ssid: str, password: str) -> tuple[bool, str]:
     try:
         # Try to connect using nmcli
         result = subprocess.run(
-            ["nmcli", "dev", "wifi", "connect", ssid, "password", password],
+            [
+                "nmcli",
+                "dev",
+                "wifi",
+                "connect",
+                ssid,
+                "password",
+                password,
+                "bssid",
+                bssid.upper(),
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -258,7 +267,6 @@ def parse_ookla_json(json_output: str) -> Optional[SpeedtestResult]:
 
         result = SpeedtestResult(
             tool="ookla",
-            timestamp=data.get("timestamp", datetime.now().isoformat()),
             download_mbps=download_mbps,
             upload_mbps=upload_mbps,
             ping_ms=ping_ms,
@@ -319,7 +327,6 @@ def parse_iperf3_json(json_output: str) -> Optional[SpeedtestResult]:
 
         result = SpeedtestResult(
             tool="iperf3",
-            timestamp=datetime.now().isoformat(),
             download_mbps=download_mbps,
             upload_mbps=upload_mbps,
             ping_ms=0.0,

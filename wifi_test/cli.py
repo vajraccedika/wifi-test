@@ -1,6 +1,7 @@
 """CLI interface for wifi-test."""
 
 import os
+import pwd
 import shutil
 import time
 
@@ -588,11 +589,13 @@ def speedtest(
 
         # Step 2: Remember current connection to restore later
         original_ssid = get_current_ssid(interface)
+        original_bssid = get_current_bssid(interface)
 
         # Step 3: Test each network
         results = []
         for i, network in enumerate(networks, 1):
             ssid = network.ssid
+            bssid = network.bssid
 
             if not quiet:
                 console.print(
@@ -608,14 +611,14 @@ def speedtest(
                 with console.status(
                     f"[cyan]Connecting to {ssid}...", spinner="dots"
                 ) as status:
-                    connected, error_msg = connect_to_network(ssid, password)
+                    connected, error_msg = connect_to_network(ssid, bssid, password)
                     if connected:
                         status.update("[cyan]Waiting for connection to establish...")
                         connected = wait_for_connection(interface, timeout=25)
                         if not connected:
                             error_msg = "Connection timeout - interface not activated"
             else:
-                connected, error_msg = connect_to_network(ssid, password)
+                connected, error_msg = connect_to_network(ssid, bssid, password)
                 if connected:
                     connected = wait_for_connection(interface, timeout=25)
                     if not connected:
@@ -642,7 +645,9 @@ def speedtest(
                 continue
 
             if not quiet:
-                console.print(f"[green]✓ Connected to {ssid}[/green]")
+                console.print(
+                    f"[green]✓ Connected to {ssid}[/green][pale_turquoise4] ({bssid})[/pale_turquoise4]"
+                )
 
             # Wait a moment for connectivity to stabilize
             time.sleep(2)
@@ -667,28 +672,13 @@ def speedtest(
 
             # Run speedtest
             try:
-                # Choose bandwidth based on network band when running UDP iperf3
-                bw = None
-                try:
-                    band_str = (network.band or "").lower()
-                    if "2.4" in band_str or "2.4ghz" in band_str:
-                        bw = "25M"
-                    elif "5" in band_str or "5ghz" in band_str:
-                        bw = "100M"
-                except Exception:
-                    bw = None
-
                 if not quiet:
                     with console.status(
                         f"[cyan]Running {display_name}...", spinner="dots"
                     ):
-                        result = _run_speedtest_for_tool(
-                            tool, cfg, interface, udp=udp, bandwidth=bw
-                        )
+                        result = _run_speedtest_for_tool(tool, cfg, interface, udp=udp)
                 else:
-                    result = _run_speedtest_for_tool(
-                        tool, cfg, interface, udp=udp, bandwidth=bw
-                    )
+                    result = _run_speedtest_for_tool(tool, cfg, interface, udp=udp)
 
                 if result:
                     result.ssid = ssid
@@ -758,13 +748,13 @@ def speedtest(
             time.sleep(1)
 
         # Step 4: Restore original connection if needed
-        if original_ssid:
+        if original_bssid:
             if not quiet:
                 console.print(
-                    f"\n[dim]Restoring connection to {original_ssid}...[/dim]"
+                    f"\n[dim]Restoring connection to {original_ssid or original_bssid}...[/dim]"
                 )
             # Try to reconnect using saved profile or cached credentials
-            reconnect_saved_network(original_ssid)
+            reconnect_saved_network(original_bssid, original_ssid)
             time.sleep(2)
 
         # Step 5: Display summary
@@ -802,7 +792,9 @@ def speedtest(
                     for port in ports:
                         try:
                             status.update(f"[bold cyan]Trying iperf3 on port {port}...")
-                            result = run_iperf3_speedtest(server, port, udp=udp)
+                            result = run_iperf3_speedtest(
+                                server, port, udp=udp, bandwidth=cfg.iperf3_bandwidth
+                            )
                             if result:
                                 break
                         except RuntimeError as e:
@@ -827,7 +819,9 @@ def speedtest(
 
                 for port in ports:
                     try:
-                        result = run_iperf3_speedtest(server, port, udp=udp)
+                        result = run_iperf3_speedtest(
+                            server, port, udp=udp, bandwidth=cfg.iperf3_bandwidth
+                        )
                         if result:
                             break
                     except RuntimeError:
@@ -922,7 +916,24 @@ def export(output: str):
 
     # Ensure deterministic column order with bssid first for lookup workflows
     all_keys.discard("bssid")
-    fieldnames = ["bssid"] + sorted(all_keys)
+    fieldnames = [
+        "bssid",
+        "ssid",
+        "band",
+        "signal",
+        "security",
+        "channel",
+        "frequency",
+        "download_mbps",
+        "upload_mbps",
+        "ping_ms",
+        "jitter_ms",
+        "packet_loss",
+        "server",
+        "isp",
+        "result_url",
+        "created_at",
+    ]
 
     try:
         with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -930,6 +941,12 @@ def export(output: str):
             writer.writeheader()
             for r in rows:
                 writer.writerow({k: r.get(k, "") for k in fieldnames})
+
+        # Change ownership from root to original user if running via sudo
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            user_info = pwd.getpwnam(sudo_user)
+            os.chown(out_path, user_info.pw_uid, user_info.pw_gid)
 
         click.echo(f"✓ Exported {len(rows)} rows to {out_path}")
     except Exception as e:

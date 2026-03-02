@@ -99,3 +99,4 @@ dmypy.json
 # static files
 iperf_sample.json
 ookla_speedtest.txt
+wifi_export.csv

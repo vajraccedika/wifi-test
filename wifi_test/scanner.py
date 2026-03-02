@@ -4,7 +4,6 @@ import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from typing import List, Optional
 
 
@@ -19,7 +18,6 @@ class WifiScanResult:
     signal: float  # dBm (RSSI)
     channel: Optional[int] = None
     security: Optional[str] = None
-    timestamp: Optional[str] = None
 
     def to_dict(self):
         """Convert to dictionary for database insertion."""
@@ -76,7 +74,6 @@ def parse_iw_scan_output(output: str) -> List[WifiScanResult]:
                     signal=current_data.get("signal", 0.0),
                     channel=current_data.get("channel"),
                     security=current_data.get("security"),
-                    timestamp=datetime.now().isoformat(),
                 )
                 results.append(result)
 
@@ -137,7 +134,6 @@ def parse_iw_scan_output(output: str) -> List[WifiScanResult]:
             signal=current_data.get("signal", 0.0),
             channel=current_data.get("channel"),
             security=current_data.get("security"),
-            timestamp=datetime.now().isoformat(),
         )
         results.append(result)
 

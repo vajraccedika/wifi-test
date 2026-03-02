@@ -22,36 +22,12 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in cur.fetchall())
 
 
-def _ensure_created_at(conn: sqlite3.Connection, table: str, ts_col: str) -> None:
-    """Ensure created_at column exists and is populated.
-
-    - Adds column if missing, with DEFAULT CURRENT_TIMESTAMP for new rows
-    - Backfills existing rows: created_at := ts_col if present else CURRENT_TIMESTAMP
-    """
-    if not _column_exists(conn, table, "created_at"):
-        conn.execute(
-            f"ALTER TABLE {table} ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP"
-        )
-        conn.commit()
-
-    # Backfill any NULL created_at values
-    conn.execute(
-        f"""
-        UPDATE {table}
-        SET created_at = COALESCE({ts_col}, CURRENT_TIMESTAMP)
-        WHERE created_at IS NULL
-        """
-    )
-    conn.commit()
-
-
 def _ensure_tables(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     cur.execute(
         """
 		CREATE TABLE IF NOT EXISTS network_results (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			timestamp TEXT,
 			tool TEXT,
 			ssid TEXT,
             bssid TEXT UNIQUE,
@@ -74,8 +50,12 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-    # Ensure created_at exists and is backfilled for existing table
-    _ensure_created_at(conn, "network_results", "timestamp")
+    # Ensure created_at column exists for older databases
+    if not _column_exists(conn, "network_results", "created_at"):
+        conn.execute(
+            "ALTER TABLE network_results ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP"
+        )
+        conn.commit()
 
 
 def _connect() -> sqlite3.Connection:
@@ -88,13 +68,12 @@ def _connect() -> sqlite3.Connection:
 def insert_scan_results(results: Iterable[Mapping]) -> int:
     """Insert multiple network result mappings.
 
-    Each mapping should contain keys: timestamp, ssid, bssid, frequency,
+    Each mapping should contain keys: ssid, bssid, frequency,
     band, signal, channel, security.
     Returns number of rows inserted.
     """
     rows = [
         (
-            r.get("timestamp"),
             r.get("ssid"),
             r.get("bssid"),
             float(r.get("frequency") or 0),
@@ -114,10 +93,9 @@ def insert_scan_results(results: Iterable[Mapping]) -> int:
         conn.executemany(
             """
             INSERT INTO network_results
-                (timestamp, ssid, bssid, frequency, band, signal, channel, security)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (ssid, bssid, frequency, band, signal, channel, security)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(bssid) DO UPDATE SET
-                timestamp = excluded.timestamp,
                 ssid = excluded.ssid,
                 frequency = excluded.frequency,
                 band = excluded.band,
@@ -137,7 +115,7 @@ def insert_scan_results(results: Iterable[Mapping]) -> int:
 def insert_speedtest_result(result: Mapping) -> int:
     """Insert a single network result mapping.
 
-    Keys: timestamp, tool, ssid, bssid, download_mbps, upload_mbps, ping_ms, jitter_ms,
+    Keys: tool, ssid, bssid, download_mbps, upload_mbps, ping_ms, jitter_ms,
     server, isp, packet_loss, result_url.
     Returns 1 if inserted, 0 otherwise.
     """
@@ -146,11 +124,10 @@ def insert_speedtest_result(result: Mapping) -> int:
         conn.execute(
             """
             INSERT INTO network_results
-                (timestamp, tool, ssid, bssid, download_mbps, upload_mbps, ping_ms, jitter_ms,
+                (tool, ssid, bssid, download_mbps, upload_mbps, ping_ms, jitter_ms,
                  server, isp, packet_loss, result_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(bssid) DO UPDATE SET
-                timestamp = excluded.timestamp,
                 tool = excluded.tool,
                 ssid = COALESCE(excluded.ssid, network_results.ssid),
                 download_mbps = excluded.download_mbps,
@@ -164,7 +141,6 @@ def insert_speedtest_result(result: Mapping) -> int:
                 created_at = CURRENT_TIMESTAMP
 			""",
             (
-                result.get("timestamp"),
                 result.get("tool"),
                 result.get("ssid"),
                 result.get("bssid"),
@@ -185,17 +161,17 @@ def insert_speedtest_result(result: Mapping) -> int:
 
 
 def get_all_results(limit: Optional[int] = None) -> List[Mapping]:
-    """Fetch network results ordered by newest first."""
+    """Fetch network results ordered by bssid ascending."""
     conn = _connect()
     try:
         cur = conn.cursor()
         if limit and limit > 0:
             cur.execute(
-                "SELECT * FROM network_results ORDER BY id DESC LIMIT ?",
+                "SELECT * FROM network_results ORDER BY bssid ASC LIMIT ?",
                 (limit,),
             )
         else:
-            cur.execute("SELECT * FROM network_results ORDER BY id DESC")
+            cur.execute("SELECT * FROM network_results ORDER BY bssid ASC")
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
