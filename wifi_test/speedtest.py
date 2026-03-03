@@ -8,6 +8,34 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Optional
 
+from .utils import run_cmd
+
+
+def _bits_to_mbps(bits_per_second: float | int | None) -> float:
+    """Convert bits per second to megabits per second."""
+    return round((bits_per_second or 0) / 1_000_000, 2)
+
+
+def _get_nested(data: dict, *keys, default=None):
+    """Safely get nested dictionary value.
+
+    Args:
+        data: Source dictionary
+        *keys: Sequence of keys to traverse
+        default: Value to return if path doesn't exist
+
+    Returns:
+        Value at nested path, or default if not found
+    """
+    for key in keys:
+        if isinstance(data, dict):
+            data = data.get(key)
+        else:
+            return default
+        if data is None:
+            return default
+    return data
+
 
 @dataclass
 class SpeedtestResult:
@@ -52,15 +80,15 @@ def wait_for_connection(interface: str = "wlan0", timeout: int = 20) -> bool:
     """
     start_time = time.time()
     while time.time() - start_time < timeout:
-        res = subprocess.run(
+        res = run_cmd(
             ["nmcli", "-t", "-f", "GENERAL.STATE", "dev", "show", interface],
-            capture_output=True,
-            text=True,
+            timeout=5,
         )
-        state = res.stdout.strip().lower()
-        # nmcli typically reports "100 (connected)" or similar
-        if "connected" in state or "activated" in state:
-            return True
+        if res:
+            state = res.stdout.strip().lower()
+            # nmcli typically reports "100 (connected)" or similar
+            if "connected" in state or "activated" in state:
+                return True
         time.sleep(0.5)
     return False
 
@@ -71,26 +99,19 @@ def reconnect_saved_network(bssid: str, ssid: Optional[str] = None) -> bool:
     Tries `nmcli dev wifi connect <ssid> bssid <bssid>` first when SSID is
     available, then falls back to `nmcli dev wifi connect <bssid>`.
     """
-    try:
-        if ssid:
-            res = subprocess.run(
-                ["nmcli", "dev", "wifi", "connect", ssid, "bssid", bssid.upper()],
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-            if res.returncode == 0:
-                return True
-
-        res = subprocess.run(
-            ["nmcli", "dev", "wifi", "connect", bssid.upper()],
-            capture_output=True,
-            text=True,
+    if ssid:
+        res = run_cmd(
+            ["nmcli", "dev", "wifi", "connect", ssid, "bssid", bssid.upper()],
             timeout=20,
         )
-        return res.returncode == 0
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        return False
+        if res and res.returncode == 0:
+            return True
+
+    res = run_cmd(
+        ["nmcli", "dev", "wifi", "connect", bssid.upper()],
+        timeout=20,
+    )
+    return res is not None and res.returncode == 0
 
 
 def connect_to_network(ssid: str, bssid: str, password: str) -> tuple[bool, str]:
@@ -141,24 +162,15 @@ def disconnect_network(interface: str) -> bool:
     Returns:
         True if disconnection successful, False otherwise
     """
-    try:
-        result = subprocess.run(
-            ["nmcli", "dev", "disconnect", interface],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        return False
+    result = run_cmd(["nmcli", "dev", "disconnect", interface], timeout=10)
+    return result is not None and result.returncode == 0
 
 
 def get_current_link_info(interface: str) -> tuple[Optional[str], Optional[str]]:
     """Get SSID and BSSID for the currently connected network.
 
-    Parses output from `iw dev <interface> link`, e.g.:
-    - Connected to 34:ca:81:49:15:ff (on wlp15s0)
-    - SSID: JB_NEW
+    Parses output from `iw dev <interface> link`, with fallback to nmcli
+    for compatibility on systems where `iw` output differs.
 
     Args:
         interface: WiFi interface name
@@ -166,17 +178,12 @@ def get_current_link_info(interface: str) -> tuple[Optional[str], Optional[str]]
     Returns:
         Tuple of (ssid, bssid), where each value is None if unavailable.
     """
-    try:
-        result = subprocess.run(
-            ["iw", "dev", interface, "link"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+    result = run_cmd(["iw", "dev", interface, "link"], timeout=5)
 
-        ssid: Optional[str] = None
-        bssid: Optional[str] = None
+    ssid: Optional[str] = None
+    bssid: Optional[str] = None
 
+    if result:
         for raw_line in result.stdout.splitlines():
             line = raw_line.strip()
 
@@ -193,13 +200,25 @@ def get_current_link_info(interface: str) -> tuple[Optional[str], Optional[str]]
                 if candidate:
                     ssid = candidate
 
-        return ssid, bssid
-    except (
-        subprocess.TimeoutExpired,
-        subprocess.CalledProcessError,
-        FileNotFoundError,
-    ):
-        return None, None
+    # Fallback to nmcli for compatibility on systems where `iw` output differs.
+    if not ssid or not bssid:
+        nmcli_result = run_cmd(
+            ["nmcli", "-t", "-f", "active,ssid,bssid", "dev", "wifi"], timeout=5
+        )
+        if nmcli_result:
+            for line in nmcli_result.stdout.split("\n"):
+                if line.startswith("yes:"):
+                    parts = line.split(":")
+                    if not ssid and len(parts) >= 2:
+                        ssid = parts[1] or None
+                    if not bssid and len(parts) >= 3:
+                        # BSSID has colons, rejoin remaining parts
+                        bssid_candidate = ":".join(parts[2:]).strip().lower()
+                        if bssid_candidate:
+                            bssid = bssid_candidate
+                    break
+
+    return ssid, bssid
 
 
 def get_current_ssid(interface: str) -> Optional[str]:
@@ -212,23 +231,7 @@ def get_current_ssid(interface: str) -> Optional[str]:
         SSID string or None if not connected
     """
     ssid, _ = get_current_link_info(interface)
-    if ssid:
-        return ssid
-
-    # Fallback to nmcli for compatibility on systems where `iw` output differs.
-    try:
-        result = subprocess.run(
-            ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for line in result.stdout.split("\n"):
-            if line.startswith("yes:"):
-                return line.split(":", 1)[1]
-        return None
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        return None
+    return ssid
 
 
 def get_current_bssid(interface: str) -> Optional[str]:
@@ -260,10 +263,12 @@ def parse_ookla_json(json_output: str) -> Optional[SpeedtestResult]:
         data = json.loads(json_output)
 
         # Convert bits per second to Mbps
-        download_mbps = (data.get("download", {}).get("bandwidth", 0) or 0) / 1_000_000
-        upload_mbps = (data.get("upload", {}).get("bandwidth", 0) or 0) / 1_000_000
-        ping_ms = data.get("ping", {}).get("latency", 0) or 0
-        jitter_ms = data.get("ping", {}).get("jitter", 0) or 0
+        download_mbps = _bits_to_mbps(
+            _get_nested(data, "download", "bandwidth", default=0)
+        )
+        upload_mbps = _bits_to_mbps(_get_nested(data, "upload", "bandwidth", default=0))
+        ping_ms = _get_nested(data, "ping", "latency", default=0) or 0
+        jitter_ms = _get_nested(data, "ping", "jitter", default=0) or 0
 
         result = SpeedtestResult(
             tool="ookla",
@@ -271,10 +276,10 @@ def parse_ookla_json(json_output: str) -> Optional[SpeedtestResult]:
             upload_mbps=upload_mbps,
             ping_ms=ping_ms,
             jitter_ms=jitter_ms,
-            server=data.get("server", {}).get("name"),
+            server=_get_nested(data, "server", "name"),
             isp=data.get("isp"),
             packet_loss=data.get("packetLoss", 0),
-            result_url=data.get("result", {}).get("url"),
+            result_url=_get_nested(data, "result", "url"),
         )
 
         return result
@@ -303,8 +308,8 @@ def parse_iperf3_json(json_output: str) -> Optional[SpeedtestResult]:
 
         # iperf3 reports bits per second, convert to Mbps
         # Use received data for download (what we got), sent for upload (what we sent)
-        download_mbps = (sum_received.get("bits_per_second", 0) or 0) / 1_000_000
-        upload_mbps = (sum_sent.get("bits_per_second", 0) or 0) / 1_000_000
+        download_mbps = _bits_to_mbps(sum_received.get("bits_per_second", 0))
+        upload_mbps = _bits_to_mbps(sum_sent.get("bits_per_second", 0))
 
         # Extract jitter and packet loss for UDP tests when available.
         # iperf3 may include these under `sum_received`, `sum`, or `sum_sent` depending on mode.
@@ -322,8 +327,9 @@ def parse_iperf3_json(json_output: str) -> Optional[SpeedtestResult]:
         )
 
         # iperf3 doesn't report ICMP round-trip time; keep ping as 0.0
-        start_info = data.get("start", {})
-        server_host = start_info.get("connecting_to", {}).get("host", "Unknown")
+        server_host = _get_nested(
+            data, "start", "connecting_to", "host", default="Unknown"
+        )
 
         result = SpeedtestResult(
             tool="iperf3",

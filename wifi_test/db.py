@@ -1,8 +1,9 @@
 """SQLite database operations for wifi-test."""
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional
+from typing import Any, Generator, Iterable, List, Mapping, Optional
 
 from .config import get_config
 
@@ -65,6 +66,21 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def _get_connection() -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for database connections."""
+    conn = _connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _to_float(value: Any) -> float:
+    """Convert value to float, defaulting to 0.0 if None/empty."""
+    return float(value) if value else 0.0
+
+
 def insert_scan_results(results: Iterable[Mapping]) -> int:
     """Insert multiple network result mappings.
 
@@ -76,9 +92,9 @@ def insert_scan_results(results: Iterable[Mapping]) -> int:
         (
             r.get("ssid"),
             r.get("bssid"),
-            float(r.get("frequency") or 0),
+            _to_float(r.get("frequency")),
             r.get("band"),
-            float(r.get("signal") or 0),
+            _to_float(r.get("signal")),
             r.get("channel"),
             r.get("security"),
         )
@@ -88,8 +104,7 @@ def insert_scan_results(results: Iterable[Mapping]) -> int:
         return 0
 
     # Use UPSERT to ensure one row per bssid, keeping the latest values
-    conn = _connect()
-    try:
+    with _get_connection() as conn:
         conn.executemany(
             """
             INSERT INTO network_results
@@ -108,8 +123,6 @@ def insert_scan_results(results: Iterable[Mapping]) -> int:
         )
         conn.commit()
         return len(rows)
-    finally:
-        conn.close()
 
 
 def insert_speedtest_result(result: Mapping) -> int:
@@ -119,8 +132,7 @@ def insert_speedtest_result(result: Mapping) -> int:
     server, isp, packet_loss, result_url.
     Returns 1 if inserted, 0 otherwise.
     """
-    conn = _connect()
-    try:
+    with _get_connection() as conn:
         conn.execute(
             """
             INSERT INTO network_results
@@ -144,26 +156,23 @@ def insert_speedtest_result(result: Mapping) -> int:
                 result.get("tool"),
                 result.get("ssid"),
                 result.get("bssid"),
-                float(result.get("download_mbps") or 0),
-                float(result.get("upload_mbps") or 0),
-                float(result.get("ping_ms") or 0),
-                float(result.get("jitter_ms") or 0),
+                _to_float(result.get("download_mbps")),
+                _to_float(result.get("upload_mbps")),
+                _to_float(result.get("ping_ms")),
+                _to_float(result.get("jitter_ms")),
                 result.get("server"),
                 result.get("isp"),
-                float(result.get("packet_loss") or 0),
+                _to_float(result.get("packet_loss")),
                 result.get("result_url"),
             ),
         )
         conn.commit()
         return 1
-    finally:
-        conn.close()
 
 
 def get_all_results(limit: Optional[int] = None) -> List[Mapping]:
     """Fetch network results ordered by bssid ascending."""
-    conn = _connect()
-    try:
+    with _get_connection() as conn:
         cur = conn.cursor()
         if limit and limit > 0:
             cur.execute(
@@ -174,5 +183,3 @@ def get_all_results(limit: Optional[int] = None) -> List[Mapping]:
             cur.execute("SELECT * FROM network_results ORDER BY bssid ASC")
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
-    finally:
-        conn.close()

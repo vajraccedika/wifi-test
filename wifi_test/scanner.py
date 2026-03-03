@@ -6,6 +6,8 @@ import time
 from dataclasses import asdict, dataclass
 from typing import List, Optional
 
+from .utils import run_cmd
+
 
 @dataclass
 class WifiScanResult:
@@ -162,12 +164,7 @@ def scan_wifi(
         try:
             # Optionally flush scan cache for fresh results
             if flush_cache:
-                subprocess.run(
-                    ["iw", "dev", interface, "scan", "flush"],
-                    capture_output=True,
-                    timeout=30,
-                    check=False,
-                )
+                run_cmd(["iw", "dev", interface, "scan", "flush"], timeout=30)
 
             # Run the scan
             result = subprocess.run(

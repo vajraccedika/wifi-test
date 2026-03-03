@@ -5,6 +5,34 @@ import subprocess
 from typing import Optional
 
 
+def run_cmd(
+    cmd: list[str],
+    timeout: int = 10,
+) -> subprocess.CompletedProcess | None:
+    """Run a subprocess command with standard error handling.
+
+    Args:
+        cmd: Command and arguments to run
+        timeout: Timeout in seconds (default: 10)
+
+    Returns:
+        CompletedProcess if successful, None if an error occurred
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (
+        subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+    ):
+        return None
+
+
 def check_command_available(
     command: str, display_name: Optional[str] = None
 ) -> tuple[bool, str]:
@@ -29,20 +57,12 @@ def check_command_available(
         )
         return (False, error_msg)
 
-    # Try to run with --version or -v to verify it actually works
-    try:
-        subprocess.run(
-            [command, "--version"], capture_output=True, timeout=5, check=False
-        )
-        return (True, "")
-    except subprocess.TimeoutExpired:
-        error_msg = (
-            f"✗ {display_name} command timed out. Please check your installation."
-        )
+    # Try to run with --version to verify it actually works
+    result = run_cmd([command, "--version"], timeout=5)
+    if result is None:
+        error_msg = f"✗ {display_name} command failed. Please check your installation."
         return (False, error_msg)
-    except Exception as e:
-        error_msg = f"✗ Error checking {display_name}: {e}"
-        return (False, error_msg)
+    return (True, "")
 
 
 def verify_speedtest_available() -> tuple[bool, str]:

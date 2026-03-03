@@ -68,6 +68,42 @@ def _run_speedtest_for_tool(
         return run_ookla_speedtest(interface)
 
 
+def _make_test_result(
+    network,
+    status: str,
+    ssid: str,
+    *,
+    result=None,
+    error: str | None = None,
+) -> dict:
+    """Create a test result dictionary for multi-network summary.
+
+    Args:
+        network: WifiScanResult object with signal/bssid/band/channel/security
+        status: Test status (success, connection_failed, no_internet, test_failed, error)
+        ssid: Network SSID
+        result: SpeedtestResult object (for success status)
+        error: Error message (for failure statuses)
+
+    Returns:
+        Dictionary for use with _display_multi_network_summary
+    """
+    data = {
+        "ssid": ssid,
+        "status": status,
+        "signal": network.signal,
+        "bssid": network.bssid,
+        "band": network.band,
+        "channel": network.channel,
+        "security": network.security,
+    }
+    if result is not None:
+        data["result"] = result
+    if error is not None:
+        data["error"] = error
+    return data
+
+
 def _display_multi_network_summary(results: list, detailed: bool = False):
     """Display summary table of multiple network tests.
 
@@ -630,16 +666,9 @@ def speedtest(
                     if error_msg:
                         console.print(f"[dim]  Error: {error_msg}[/dim]")
                 results.append(
-                    {
-                        "ssid": ssid,
-                        "status": "connection_failed",
-                        "signal": network.signal,
-                        "bssid": network.bssid,
-                        "band": network.band,
-                        "channel": network.channel,
-                        "security": network.security,
-                        "error": error_msg,
-                    }
+                    _make_test_result(
+                        network, "connection_failed", ssid, error=error_msg
+                    )
                 )
                 disconnect_network(interface)
                 continue
@@ -656,17 +685,7 @@ def speedtest(
             if not has_internet():
                 if not quiet:
                     console.print(f"[yellow]⚠ No internet on {ssid}[/yellow]")
-                results.append(
-                    {
-                        "ssid": ssid,
-                        "status": "no_internet",
-                        "signal": network.signal,
-                        "bssid": network.bssid,
-                        "band": network.band,
-                        "channel": network.channel,
-                        "security": network.security,
-                    }
-                )
+                results.append(_make_test_result(network, "no_internet", ssid))
                 disconnect_network(interface)
                 continue
 
@@ -684,16 +703,7 @@ def speedtest(
                     result.ssid = ssid
                     result.bssid = get_current_bssid(interface) or network.bssid
                     results.append(
-                        {
-                            "ssid": ssid,
-                            "status": "success",
-                            "signal": network.signal,
-                            "bssid": network.bssid,
-                            "band": network.band,
-                            "channel": network.channel,
-                            "security": network.security,
-                            "result": result,
-                        }
+                        _make_test_result(network, "success", ssid, result=result)
                     )
                     # Save to database if enabled
                     if cfg.auto_save:
@@ -713,33 +723,12 @@ def speedtest(
                             f"[green]✓ {ssid}:[/green] ↓{result.download_mbps:.2f} Mbps / ↑{result.upload_mbps:.2f} Mbps"
                         )
                 else:
-                    results.append(
-                        {
-                            "ssid": ssid,
-                            "status": "test_failed",
-                            "signal": network.signal,
-                            "bssid": network.bssid,
-                            "band": network.band,
-                            "channel": network.channel,
-                            "security": network.security,
-                        }
-                    )
+                    results.append(_make_test_result(network, "test_failed", ssid))
                     if not quiet:
                         console.print(f"[red]✗ Speedtest failed on {ssid}[/red]")
 
             except Exception as e:
-                results.append(
-                    {
-                        "ssid": ssid,
-                        "status": "error",
-                        "signal": network.signal,
-                        "bssid": network.bssid,
-                        "band": network.band,
-                        "channel": network.channel,
-                        "security": network.security,
-                        "error": str(e),
-                    }
-                )
+                results.append(_make_test_result(network, "error", ssid, error=str(e)))
                 if not quiet:
                     console.print(f"[red]✗ Error on {ssid}:[/red] {e}")
 
